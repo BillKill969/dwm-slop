@@ -1,0 +1,22 @@
+# Build artifacts
+*.o
+*.tar.gz
+dwm
+config.h
+
+# Patch backup and reject files
+*.orig
+*.rej
+patches/
+
+# Local tooling & agents
+.codegraph/
+.projectmem/
+.agents/
+AGENTS.md
+docs/
+
+.projectmem/events.jsonl
+.projectmem/watch.pid
+.projectmem/watch.log
+.projectmem/structure.json
