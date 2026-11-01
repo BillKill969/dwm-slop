@@ -13,8 +13,12 @@ patches/
 .codegraph/
 .projectmem/
 .agents/
+.lean/
+*.lean
+dwm-lean4.md
 AGENTS.md
 docs/
+dwm_agent_engineering_and_verification_guide.md
 
 .projectmem/events.jsonl
 .projectmem/watch.pid

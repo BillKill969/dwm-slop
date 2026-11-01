@@ -7,7 +7,6 @@ static void tile(Monitor *m);
 
 /* Internals */
 static void getgaps(Monitor *m, int *oh, int *ov, int *ih, int *iv, unsigned int *nc);
-static void getfacts(Monitor *m, int msize, int ssize, float *mf, float *sf, int *mr, int *sr);
 static void setgaps(int oh, int ov, int ih, int iv);
 
 /* Settings */
@@ -92,34 +91,8 @@ getgaps(Monitor *m, int *oh, int *ov, int *ih, int *iv, unsigned int *nc)
 	*nc = n;            // number of clients
 }
 
-void
-getfacts(Monitor *m, int msize, int ssize, float *mf, float *sf, int *mr, int *sr)
-{
-	unsigned int n;
-	float mfacts = 0, sfacts = 0;
-	int mtotal = 0, stotal = 0;
-	Client *c;
-
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++)
-		if (n < m->nmaster)
-			mfacts += c->cfact;
-		else
-			sfacts += c->cfact;
-
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++)
-		if (n < m->nmaster)
-			mtotal += msize * (c->cfact / mfacts);
-		else
-			stotal += ssize * (c->cfact / sfacts);
-
-	*mf = mfacts; // total factor of master area
-	*sf = sfacts; // total factor of stack area
-	*mr = msize - mtotal; // the remainder (rest) of pixels after a cfacts master split
-	*sr = ssize - stotal; // the remainder (rest) of pixels after a cfacts stack split
-}
-
 /*
- * Default tile layout + gaps
+ * Default tile layout + gaps (Exact Integer Engine)
  */
 static void
 tile(Monitor *m)
@@ -128,8 +101,8 @@ tile(Monitor *m)
 	int oh, ov, ih, iv;
 	int mx = 0, my = 0, mh = 0, mw = 0;
 	int sx = 0, sy = 0, sh = 0, sw = 0;
-	float mfacts, sfacts;
-	int mrest, srest;
+	int rem_mh = 0, rem_mw = 0;
+	int rem_sh = 0, rem_sw = 0;
 	Client *c;
 
 	getgaps(m, &oh, &ov, &ih, &iv, &n);
@@ -138,24 +111,48 @@ tile(Monitor *m)
 
 	sx = mx = m->wx + ov;
 	sy = my = m->wy + oh;
-	mh = m->wh - 2*oh - ih * (MIN(n, m->nmaster) - 1);
-	sh = m->wh - 2*oh - ih * (n - m->nmaster - 1);
+	mh = m->nmaster ? m->wh - 2*oh - ih * (MIN(n, (unsigned int)m->nmaster) - 1) : 0;
+	sh = (n > (unsigned int)m->nmaster) ? m->wh - 2*oh - ih * (n - m->nmaster - 1) : 0;
+	if (mh < 0) mh = 0;
+	if (sh < 0) sh = 0;
 	sw = mw = m->ww - 2*ov;
 
 	if (m->nmaster && n > m->nmaster) {
-		sw = (mw - iv) * (1 - m->mfact);
-		mw = mw - iv - sw;
+		int total_w = mw - iv;
+		int mfact_scaled = (int)(m->mfact * 1000.0f + 0.5f);
+		mw = (total_w * mfact_scaled) / 1000;
+		sw = total_w - mw;
 		sx = mx + mw + iv;
 	}
 
-	getfacts(m, mh, sh, &mfacts, &sfacts, &mrest, &srest);
+	/* Exact cfacts weights calculation */
+	for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++) {
+		if (i < m->nmaster)
+			rem_mw += c->cfact;
+		else
+			rem_sw += c->cfact;
+	}
+	rem_mh = mh;
+	rem_sh = sh;
 
-	for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
+	/* Stepwise integer allocation: 0-pixel remainder drift, zero underflow */
+	for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++) {
 		if (i < m->nmaster) {
-			resize(c, mx, my, mw - (2*c->bw), mh * (c->cfact / mfacts) + (i < mrest ? 1 : 0) - (2*c->bw), 0);
-			my += HEIGHT(c) + ih;
+			int h = (rem_mw > 0) ? (rem_mh * c->cfact) / rem_mw : 0;
+			rem_mh -= h;
+			rem_mw -= c->cfact;
+			int win_w = MAX(1, mw - 2 * c->bw);
+			int win_h = MAX(1, h - 2 * c->bw);
+			resize(c, mx, my, win_w, win_h, 0);
+			my += h + ih;
 		} else {
-			resize(c, sx, sy, sw - (2*c->bw), sh * (c->cfact / sfacts) + ((i - m->nmaster) < srest ? 1 : 0) - (2*c->bw), 0);
-			sy += HEIGHT(c) + ih;
+			int h = (rem_sw > 0) ? (rem_sh * c->cfact) / rem_sw : 0;
+			rem_sh -= h;
+			rem_sw -= c->cfact;
+			int win_w = MAX(1, sw - 2 * c->bw);
+			int win_h = MAX(1, h - 2 * c->bw);
+			resize(c, sx, sy, win_w, win_h, 0);
+			sy += h + ih;
 		}
+	}
 }

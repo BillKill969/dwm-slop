@@ -63,9 +63,9 @@ static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 
 /* Window rules: use `xprop` to find WM_CLASS and WM_NAME */
 static const Rule rules[] = {
-	/* class      instance    title       tags mask     isfloating   monitor */
-	{ "Gimp",     NULL,       NULL,       0,            1,           -1 },
-	{ "Firefox",  NULL,       NULL,       1 << 8,       0,           -1 },
+	/* class      instance    title       tags mask     isfloating   isfullscreen  monitor */
+	{ "Gimp",     NULL,       NULL,       0,            1,           0,            -1 },
+	{ "Firefox",  NULL,       NULL,       1 << 8,       0,           0,            -1 },
 };
 
 /* Layout settings */

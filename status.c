@@ -61,6 +61,73 @@ status_init(void)
 	}
 }
 
+/* Single-pass UTF-8 boundary validator: rewinds at most 3 bytes to prevent slicing multi-byte glyphs */
+static size_t
+sanitize_utf8(char *buf, size_t len)
+{
+	if (len == 0)
+		return 0;
+
+	if ((unsigned char)buf[len - 1] < 0x80)
+		return len;
+
+	size_t i = len;
+	while (i > 0 && (unsigned char)buf[i - 1] >= 0x80 && (unsigned char)buf[i - 1] < 0xC0)
+		i--;
+
+	if (i == 0) {
+		buf[0] = '\0';
+		return 0;
+	}
+
+	unsigned char lead = (unsigned char)buf[i - 1];
+	size_t needed = 0;
+	if (lead >= 0xC0 && lead <= 0xDF)
+		needed = 2;
+	else if (lead >= 0xE0 && lead <= 0xEF)
+		needed = 3;
+	else if (lead >= 0xF0 && lead <= 0xF7)
+		needed = 4;
+	else {
+		buf[i - 1] = '\0';
+		return i - 1;
+	}
+
+	size_t available = len - (i - 1);
+	if (available < needed) {
+		buf[i - 1] = '\0';
+		return i - 1;
+	}
+
+	return len;
+}
+
+/* Status2D escape span sanitizer: drops trailing unclosed caret escape to prevent tag hijacking */
+static size_t
+sanitize_status2d(char *buf, size_t len)
+{
+	size_t last_open = (size_t)-1;
+	int in_tag = 0;
+
+	for (size_t i = 0; i < len; i++) {
+		if (buf[i] == '^') {
+			if (!in_tag) {
+				in_tag = 1;
+				last_open = i;
+			} else {
+				in_tag = 0;
+			}
+		}
+	}
+
+	if (in_tag && last_open != (size_t)-1) {
+		buf[last_open] = '\0';
+		len = last_open;
+	}
+
+	return len;
+}
+
 /* Format all block outputs into stext and redraw bar if changed */
 static void
 status_format(void)
@@ -93,6 +160,12 @@ status_format(void)
 			if (pos + olen < sizeof(buf) - 1) {
 				memcpy(buf + pos, b->output, olen);
 				pos += olen;
+				buf[pos] = '\0';
+			}
+			/* Enforce markup isolation with closing ^d^ if needed */
+			if (pos >= 3 && strcmp(buf + pos - 3, "^d^") != 0 && pos + 3 < sizeof(buf) - 1) {
+				memcpy(buf + pos, "^d^", 3);
+				pos += 3;
 				buf[pos] = '\0';
 			}
 		} else {
@@ -135,6 +208,9 @@ status_format(void)
 		has_prev = 1;
 	}
 
+	pos = sanitize_utf8(buf, pos);
+	pos = sanitize_status2d(buf, pos);
+
 	if (strcmp(stext, buf) != 0) {
 		strncpy(stext, buf, sizeof(stext) - 1);
 		stext[sizeof(stext) - 1] = '\0';
@@ -151,6 +227,8 @@ status_spawn(Block *b, time_t now)
 	if (b->func) {
 		char buf[sizeof(b->output)] = {0};
 		b->func(buf, sizeof(buf));
+		size_t len = sanitize_utf8(buf, strlen(buf));
+		len = sanitize_status2d(buf, len);
 		b->last_run = now;
 		if (strcmp(b->output, buf) != 0) {
 			strncpy(b->output, buf, sizeof(b->output) - 1);
@@ -259,6 +337,9 @@ status_read(Block *b, int revents)
 		size_t len = strlen(buf);
 		while (len > 0 && (buf[len - 1] == ' ' || buf[len - 1] == '\t'))
 			buf[--len] = '\0';
+
+		len = sanitize_utf8(buf, len);
+		len = sanitize_status2d(buf, len);
 
 		if (strcmp(b->output, buf) != 0) {
 			strncpy(b->output, buf, sizeof(b->output) - 1);
